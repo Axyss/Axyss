@@ -22,5 +22,9 @@ Lately, I've been deeply curious about low-level programming and reverse enginee
   </tr>
 </table>
 
-## 📊 GitHub Stats
-<img src="https://github-readme-stats.vercel.app/api?username=Axyss&show_icons=true&theme=dark&hide_border=true" alt="GitHub Stats" />
+
+<details>
+  <summary><h2>📊 GitHub Stats</h2></summary>
+  <img src="https://github-readme-stats.vercel.app/api?username=Axyss&show_icons=true&theme=dark&hide_border=true" alt="GitHub Stats" />
+</details>
+

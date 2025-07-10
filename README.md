@@ -1,16 +1,26 @@
-## Hi there 👋
+# 👋 Hi, I'm Alejandro
+I'm a passionate *fulllstack developer* who enjoys building tools and constantly diving into new technologies.
+Lately, I've been deeply curious about low-level programming and reverse engineering.
 
-<!--
-**Axyss/Axyss** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+## 🛠️ Tech Stack
+<table>
+  <tr>
+    <th>💼 Proficient In</th>
+    <th>🔧 Familiar With</th>
+    <th>📚 Currently Learning</th>
+  </tr>
+  <tr>
+    <td>
+      <img src="https://skillicons.dev/icons?i=python,java,vue,c,ts,tailwind,mongo,postgresql,docker,linux&perline=5" />
+    </td>
+    <td>
+      <img src="https://skillicons.dev/icons?i=cs,kotlin,redis&perline=5" />
+    </td>
+    <td>
+      <img src="https://skillicons.dev/icons?i=rust,nextjs,react&perline=5" />
+    </td>
+  </tr>
+</table>
 
-Here are some ideas to get you started:
-
-- 🔭 I’m currently working on ...
-- 🌱 I’m currently learning ...
-- 👯 I’m looking to collaborate on ...
-- 🤔 I’m looking for help with ...
-- 💬 Ask me about ...
-- 📫 How to reach me: ...
-- 😄 Pronouns: ...
-- ⚡ Fun fact: ...
--->
+## 📊 GitHub Stats
+<img src="https://github-readme-stats.vercel.app/api?username=Axyss&show_icons=true&theme=dark&hide_border=true" alt="GitHub Stats" />

@@ -1,5 +1,5 @@
 # 👋 Hi, I'm Alejandro
-I'm a passionate *fulllstack developer* who enjoys building tools and constantly diving into new technologies.
+I'm a passionate *fullstack developer* who enjoys building tools and constantly diving into new technologies.
 Lately, I've been deeply curious about low-level programming and reverse engineering.
 
 ## 🛠️ Tech Stack

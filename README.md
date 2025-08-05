@@ -22,7 +22,6 @@ Lately, I've been deeply curious about low-level programming and reverse enginee
     </td>
   </tr>
 </table>
-
 <!--
 <details>
   <summary><h2>📊 GitHub Stats</h2></summary>

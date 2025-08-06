@@ -15,10 +15,10 @@ Lately, I've been deeply curious about low-level programming and reverse enginee
       <img src="https://skillicons.dev/icons?i=python,java,vue,c,ts,tailwind,mongo,postgresql,docker,linux&perline=5" />
     </td>
     <td>
-      <img src="https://skillicons.dev/icons?i=cs,kotlin,react&perline=5" />
+      <img src="https://skillicons.dev/icons?i=cs,kotlin,nextjs,react&perline=5" />
     </td>
     <td>
-      <img src="https://skillicons.dev/icons?i=rust,nextjs&perline=2" />
+      <img src="https://skillicons.dev/icons?i=rust&perline=2" />
     </td>
   </tr>
 </table>

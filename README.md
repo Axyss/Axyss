@@ -2,7 +2,6 @@
 I'm a passionate developer who enjoys building open source tools and constantly diving into new technologies.
 Lately, I've been deeply curious about low-level programming and reverse engineering.
 
-#### 📬 Contact me @axyss on Discord
 ## 🛠️ Tech Stack
 <table>
   <tr>
@@ -22,6 +21,9 @@ Lately, I've been deeply curious about low-level programming and reverse enginee
     </td>
   </tr>
 </table>
+
+#### 📬 Contact me @axyss on Discord
+
 <!--
 <details>
   <summary><h2>📊 GitHub Stats</h2></summary>

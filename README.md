@@ -23,7 +23,6 @@ Lately, I've been deeply curious about low-level programming and reverse enginee
 </table>
 
 #### 📬 Contact me @axyss on Discord
-
 <!--
 <details>
   <summary><h2>📊 GitHub Stats</h2></summary>

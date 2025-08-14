@@ -17,12 +17,11 @@ Lately, I've been deeply curious about low-level programming and reverse enginee
       <img src="https://skillicons.dev/icons?i=cs,kotlin,nextjs,react&perline=5" />
     </td>
     <td>
-      <img src="https://skillicons.dev/icons?i=rust&perline=2" />
+      <img src="https://skillicons.dev/icons?i=rust&perline=5" />
     </td>
   </tr>
 </table>
 
-#### 📬 Contact me @axyss on Discord
 <!--
 <details>
   <summary><h2>📊 GitHub Stats</h2></summary>

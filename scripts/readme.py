@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Render the profile README graphics and refresh the recent contributions list.
+"""Render the whole profile README as one image and refresh its recent contributions.
 
-    python scripts/readme.py                    # fetch my PRs, render everything, update README.md
+    python scripts/readme.py                    # fetch my PRs, redraw, update README.md
     python scripts/readme.py --from prs.json    # same, from a saved search API response
 
-Every graphic is written twice (light and dark) and the README picks one with
-<picture> and prefers-color-scheme. All text is drawn as vector outlines taken from
-scripts/glyphs.json, so it looks identical in every browser and never depends on a
-web font being installed or allowed to load. Standard library only.
+The README is a single <picture>: a wide layout for desktop and a narrow one for
+phones, each in light and dark, so GitHub picks whichever fits the screen and theme.
+All text is drawn as vector outlines from scripts/glyphs.json, so it looks the same in
+every browser, and the image's alt text carries the full content for screen readers.
+Standard library only.
 """
 import argparse
 import html
@@ -29,6 +30,9 @@ ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
 README = ROOT / "README.md"
 
+INTRO = ("I love building open source tools and trying out new tech. These days I'm mostly into "
+         "self-hosting and trying the shiny new frontier model of the month.")
+
 # Edit the stack here; icon keys are defined in ICONS at the bottom of the file.
 STACK = [
     ("Proficient", ["python", "java", "typescript", "vue"]),
@@ -36,18 +40,18 @@ STACK = [
     ("Currently checking out", ["gemini", "t3code", "fable"]),
 ]
 
-# GitHub's own text colours, so the graphics sit flush with the README text.
-# Lines and tiles use the text colour at low opacity, so they also blend into the
-# dimmed and high-contrast themes.
+# GitHub's own text colours. Lines and tiles use the text colour at low opacity,
+# so they also blend into the dimmed and high-contrast themes.
 THEMES = {
     "light": dict(fg="#1f2328", muted="#59636e"),
     "dark": dict(fg="#f0f6fc", muted="#9198a1"),
 }
 
-W = 840          # GitHub's profile README column is ~840px wide on desktop: 1 unit ≈ 1px
-SLANT = 0.615    # dx/dy of the diagonal strokes in the logo (≈58°); every diagonal uses it
-SEARCH_URL = ("https://github.com/search?q=" + urllib.parse.quote(f"author:{USER} is:pr -user:{USER}")
-              + "&type=pullrequests&s=created&o=desc")
+# Two layouts: GitHub's profile column is ~840px on desktop, so 1 unit ≈ 1px there;
+# phones get a narrower, taller layout so the text stays readable.
+LAYOUTS = {"wide": 840, "narrow": 380}
+NARROW_MEDIA = "(max-width: 600px)"
+SLANT = 0.615  # dx/dy of the diagonal strokes in the logo (≈58°)
 
 
 # ---------------------------------------------------------------------------- text
@@ -106,16 +110,28 @@ class Face:
             cut = cut[:space]
         return cut.rstrip(" -–—:;,.(/") + "…"
 
+    def wrap(self, s, size, max_w):
+        """Greedy line breaking on spaces."""
+        lines, line = [], ""
+        for word in self.clean(s).split(" "):
+            test = f"{line} {word}" if line else word
+            if line and self.width(test, size) > max_w:
+                lines.append(line)
+                line = word
+            else:
+                line = test
+        return lines + [line] if line else lines
+
 
 def _base(ch):
     return unicodedata.normalize("NFD", ch)[0]
 
 
 class Doc:
-    """An SVG under construction: collects glyph outlines used and body markup."""
+    """An SVG under construction: collects the glyph outlines used and the body markup."""
 
-    def __init__(self):
-        self.defs, self.body = {}, []
+    def __init__(self, width):
+        self.w, self.defs, self.body, self.delay = width, {}, [], 0.0
 
     def _glyph(self, face, name, x, y=0):
         adv, shape = face.glyphs[name]
@@ -139,17 +155,25 @@ class Doc:
     def add(self, markup):
         self.body.append(markup)
 
-    def render(self, theme, w, h, label, extra_css=""):
+    def enter(self, step=0.04):
+        """Open a group that fades in after the previous one."""
+        self.body.append(f'<g class="in" style="animation-delay:{self.delay:.2f}s">')
+        self.delay += step
+
+    def leave(self):
+        self.body.append("</g>")
+
+    def render(self, theme, h, label):
         t = THEMES[theme]
         css = (f".f{{fill:{t['fg']}}}.m{{fill:{t['muted']}}}"
-               f".s{{stroke:{t['fg']};stroke-opacity:.2}}"
-               f".o{{fill:none;stroke:{t['fg']}}}"
+               f".s{{stroke:{t['fg']};stroke-opacity:.2}}.o{{fill:none;stroke:{t['fg']}}}"
                ".in{animation:in .7s cubic-bezier(.2,.8,.2,1) backwards}"
                "@keyframes in{from{opacity:0;transform:translateY(5px)}}"
-               + extra_css +
+               ".rule{transform-box:fill-box;transform-origin:left;animation:rule .9s cubic-bezier(.6,0,.2,1) backwards}"
+               "@keyframes rule{from{transform:scaleX(0)}}"
                "@media (prefers-reduced-motion:reduce){*{animation:none!important}}")
         label = html.escape(label, quote=True)
-        return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{self.w}" height="{_n(h)}" viewBox="0 0 {self.w} {_n(h)}" '
                 f'role="img" aria-label="{label}"><title>{label}</title><style>{css}</style>'
                 f'<defs>{"".join(self.defs.values())}</defs>{"".join(self.body)}</svg>\n')
 
@@ -163,136 +187,191 @@ def _attr(name, v):
     return f' {name}="{_n(v)}"' if round(v, 2) else ""
 
 
-def slash(x, y_top, y_bottom, width, cls):
-    """A parallelogram stroke at the logo's angle, like the strokes in the logo."""
-    dx = (y_bottom - y_top) * SLANT
-    pts = [(x + dx, y_top), (x + dx + width, y_top), (x + width, y_bottom), (x, y_bottom)]
-    return f'<polygon class="{cls}" points="{" ".join(f"{_n(a)},{_n(b)}" for a, b in pts)}"/>'
+# ----------------------------------------------------------------------- sections
+# Each section draws at vertical offset y and returns the y where the next one starts.
 
+def intro(d, y, size, leading):
+    lines = SANS_REGULAR.wrap(INTRO, size, d.w)
+    d.enter()
+    for i, line in enumerate(lines):
+        d.text(SANS_REGULAR, line, size, 0, y + round(leading * 0.72) + i * leading, "f")
+    d.leave()
+    return y + len(lines) * leading
 
-# ----------------------------------------------------------------------- graphics
 
 SEP_H, SEP_BASE, SEP_SIZE = 38, 24, 13
 
 
-def separator(theme, num, title, legend=False):
+def separator(d, y, num, title, legend=False):
     """"01 / STACK ────" section divider, optionally with the merged/open legend."""
-    d = Doc()
-    d.text(MONO, num, 11, 0, SEP_BASE, "m", ls=1)
-    d.add(slash(22, SEP_BASE - 12, SEP_BASE + 1, 4.2, "f"))
-    x = 22 + 13 * SLANT + 4.2 + 9
-    x += d.text(SANS_BOLD, title.upper(), SEP_SIZE, x, SEP_BASE, "f", ls=3.2)
-    end = W
+    base = y + SEP_BASE
+    d.enter(0.06)
+    d.text(MONO, num, 11, 0, base, "m", ls=1)
+    dx = 13 * SLANT
+    pts = [(22 + dx, base - 12), (26.2 + dx, base - 12), (26.2, base + 1), (22, base + 1)]
+    d.add(f'<polygon class="f" points="{" ".join(f"{_n(a)},{_n(b)}" for a, b in pts)}"/>')
+    x = 22 + dx + 4.2 + 9
+    x += d.text(SANS_BOLD, title.upper(), SEP_SIZE, x, base, "f", ls=3.2)
+    end = d.w
     if legend:  # drawn right to left: "■ MERGED  □ OPEN"
         for word, merged in (("OPEN", False), ("MERGED", True)):
-            end -= d.text(MONO, word, 10, end, SEP_BASE, "m", anchor="end", ls=1.2) + 7
-            end -= MARK_W
-            d.add(marker(end, SEP_BASE, merged))
+            end -= d.text(MONO, word, 10, end, base, "m", anchor="end", ls=1.2) + 7 + MARK
+            d.add(marker(end, base, merged))
             end -= 20
-    mid = round(SEP_BASE - SEP_SIZE * SANS_BOLD.cap / 2) + 0.5
-    d.add(f'<path class="s rule" d="M{_n(x + 14)} {_n(mid)}H{_n(end)}"/>')
-    css = (".rule{transform-box:fill-box;transform-origin:left;animation:rule .9s .1s cubic-bezier(.6,0,.2,1) backwards}"
-           "@keyframes rule{from{transform:scaleX(0)}}")
-    return d.render(theme, W, SEP_H, f"{num} / {title}", css)
+    d.leave()
+    mid = round(base - SEP_SIZE * SANS_BOLD.cap / 2) + 0.5
+    d.add(f'<path class="s rule" style="animation-delay:{d.delay:.2f}s" d="M{_n(x + 14)} {_n(mid)}H{_n(end)}"/>')
+    return y + SEP_H
 
 
-MARK_W = 8
+def separator_width(title, legend=False):
+    w = 22 + 13 * SLANT + 4.2 + 9 + SANS_BOLD.width(title.upper(), SEP_SIZE, 3.2) + 14 + 40
+    if legend:
+        w += sum(MONO.width(word, 10, 1.2) + 7 + MARK + 20 for word in ("OPEN", "MERGED"))
+    return w
+
+
+MARK = 8
 
 
 def marker(x, base, merged):
     """Status mark for a PR, sitting on the baseline: solid square when merged, hollow when open."""
-    x, top = round(x), round(base) - MARK_W
+    x, top = round(x), round(base) - MARK
     if merged:
-        return f'<rect class="f" x="{x}" y="{top}" width="{MARK_W}" height="{MARK_W}"/>'
-    return (f'<rect class="o" x="{x + 0.5}" y="{top + 0.5}" width="{MARK_W - 1}" height="{MARK_W - 1}" '
-            'stroke-width="1"/>')
+        return f'<rect class="f" x="{x}" y="{top}" width="{MARK}" height="{MARK}"/>'
+    return f'<rect class="o" x="{x + 0.5}" y="{top + 0.5}" width="{MARK - 1}" height="{MARK - 1}"/>'
 
 
 TILE, MIN_PITCH, LABEL_GAP = 42, 72, 16
 HEAD_BASE, RULE_Y, TILE_Y = 14, 22.5, 33.5  # .5: 1px strokes land on whole pixels
 LABEL_BASE = TILE_Y + TILE + 17
-STACK_H = LABEL_BASE + 8
+GROUP_H = LABEL_BASE + 8
 
 
-def tile_shape(x, y):
-    c = 9  # corners cut along the logo's diagonal
-    cx = c * SLANT
-    pts = [(x + cx, y), (x + TILE, y), (x + TILE, y + TILE - c), (x + TILE - cx, y + TILE),
-           (x, y + TILE), (x, y + c)]
-    return " ".join(f"{_n(a)},{_n(b)}" for a, b in pts)
+def tile(d, theme, key, x, y):
+    t = THEMES[theme]
+    label, box, scale, path = ICONS[key]
+    c, cx = 9, 9 * SLANT  # corners cut along the logo's diagonal
+    pts = [(x + cx, y), (x + TILE, y), (x + TILE, y + TILE - c), (x + TILE - cx, y + TILE), (x, y + TILE), (x, y + c)]
+    d.add(f'<polygon points="{" ".join(f"{_n(a)},{_n(b)}" for a, b in pts)}" fill="{t["fg"]}" fill-opacity=".045" '
+          f'stroke="{t["fg"]}" stroke-opacity=".26"/>')
+    if path:
+        size = 22 * scale
+        d.add(f'<path class="f" transform="translate({_n(x + (TILE - size) / 2)} {_n(y + (TILE - size) / 2)}) '
+              f'scale({_n(size / box, 5)})" d="{path}"/>')
+    else:  # no official mark: letter it, e.g. "T3"
+        cap = 12.5 * scale
+        d.text(SANS_BOLD, box, cap / SANS_BOLD.cap, x + TILE / 2, y + (TILE + cap) / 2, "f", anchor="middle", ls=-0.3)
 
 
-def stack(theme):
-    """Three columns of tiles spanning the full width, like the rows below.
+def stack_group(d, theme, y, x0, width, heading, keys, pitch, lw, centred=True):
+    d.text(MONO_BOLD, heading.upper(), 10.5, x0, y + HEAD_BASE, "f", ls=1.8)
+    d.add(f'<path class="s" d="M{x0} {_n(y + RULE_Y)}H{round(x0 + width) + 1}"/>')
+    for j, key in enumerate(keys):
+        x = round(x0 + j * pitch) + 0.5
+        d.enter(0.035)
+        tile(d, theme, key, x, y + TILE_Y)
+        if centred:
+            cx = min(max(x + TILE / 2, lw[key] / 2), d.w - lw[key] / 2)  # keep edge labels inside
+            d.text(MONO, ICONS[key][0], 11, cx, y + LABEL_BASE, "m", anchor="middle")
+        else:
+            d.text(MONO, ICONS[key][0], 11, x - 0.5, y + LABEL_BASE, "m")
+        d.leave()
 
-    Every tile sits on the same pitch, wide enough that no two labels touch. Each column
-    is as wide as its tiles or its heading, whichever is wider, and the spare width is
-    shared out between the columns.
-    """
-    d, t = Doc(), THEMES[theme]
+
+def stack(d, theme, y):
+    """Wide: three columns on one pitch across the full width. Narrow: one group per row."""
     lw = {k: MONO.width(ICONS[k][0], 11) for _, keys in STACK for k in keys}
     pitch = max([MIN_PITCH] + [(lw[a] + lw[b]) / 2 + LABEL_GAP
                                for _, keys in STACK for a, b in zip(keys, keys[1:])])
     widths = [max(MONO_BOLD.width(h.upper(), 10.5, 1.8),  # heading, tiles, or a long last label
                   (len(keys) - 1) * pitch + max(TILE, (TILE + lw[keys[-1]]) / 2)) for h, keys in STACK]
-    gap = (W - 1 - sum(widths)) / max(len(STACK) - 1, 1)
-    gx, n = 0.0, 0
-    for (heading, keys), gw in zip(STACK, widths):
-        x0 = round(gx)
-        d.text(MONO_BOLD, heading.upper(), 10.5, x0, HEAD_BASE, "f", ls=1.8)
-        d.add(f'<path class="s" d="M{x0} {RULE_Y}H{round(gx + gw) + 1}"/>')
-        for j, key in enumerate(keys):
-            x = round(gx + j * pitch) + 0.5
-            label, box, scale, path = ICONS[key]
-            d.add(f'<g class="in" style="animation-delay:{0.04 + n * 0.04:.2f}s">')
-            d.add(f'<polygon points="{tile_shape(x, TILE_Y)}" fill="{t["fg"]}" fill-opacity=".045" '
-                  f'stroke="{t["fg"]}" stroke-opacity=".26" stroke-width="1"/>')
-            if path:
-                size = 22 * scale
-                ix, iy = x + (TILE - size) / 2, TILE_Y + (TILE - size) / 2
-                d.add(f'<path class="f" transform="translate({_n(ix)} {_n(iy)}) scale({_n(size / box, 5)})" d="{path}"/>')
-            else:  # no official mark: letter it, e.g. "T3"
-                cap = 12.5 * scale
-                d.text(SANS_BOLD, box, cap / SANS_BOLD.cap, x + TILE / 2, TILE_Y + (TILE + cap) / 2, "f",
-                       anchor="middle", ls=-0.3)
-            cx = min(max(x + TILE / 2, lw[key] / 2), W - lw[key] / 2)  # keep edge labels inside
-            d.text(MONO, label, 11, cx, LABEL_BASE, "m", anchor="middle")
-            d.add("</g>")
-            n += 1
-        gx += gw + gap
-    alt = ". ".join(f"{h}: {', '.join(ICONS[k][0] for k in keys)}" for h, keys in STACK)
-    return d.render(theme, W, STACK_H, alt), alt
+    if sum(widths) + 48 * (len(STACK) - 1) <= d.w:
+        gap = (d.w - 1 - sum(widths)) / max(len(STACK) - 1, 1)
+        gx = 0.0
+        for (heading, keys), gw in zip(STACK, widths):
+            stack_group(d, theme, y, round(gx), gw, heading, keys, pitch, lw)
+            gx += gw + gap
+        return y + GROUP_H
+    # narrow: one group per row, labels left-aligned under their tiles so long ones never collide
+    pitch = max([MIN_PITCH] + [lw[k] + LABEL_GAP for _, keys in STACK for k in keys[:-1]])
+    for heading, keys in STACK:
+        stack_group(d, theme, y, 0, d.w - 1, heading, keys, pitch, lw, centred=False)
+        y += GROUP_H + 12
+    return y - 12
 
 
 ROW_H, ROW_BASE = 34, 21
 
 
-def row(theme, pr, i, title_x):
-    """One pull request: status mark, owner/repo #number, title and date."""
-    d = Doc()
-    d.add(f'<g class="in" style="animation-delay:{0.05 + i * 0.06:.2f}s">')
-    d.add(marker(0, ROW_BASE, pr["status"] == "merged"))
-    x = 17
-    room = title_x - x - 24 - MONO.width(f" #{pr['num']}", 12)
+def repo_label(d, pr, x, base, room):
+    """owner/ dimmed, project name bright, #number dimmed; shortens the owner first."""
     repo = pr["repo"]
-    if MONO.width(repo, 12) > room:  # shorten the owner first: the project name matters more
+    if MONO.width(repo, 12) > room:
         repo = "…/" + MONO.fit(repo.split("/", 1)[1], 12, room - MONO.width("…/", 12))
-    owner, slash_, name = repo.partition("/")
-    x += d.text(MONO, owner + slash_, 12, x, ROW_BASE, "m")  # owner/ dimmed, project name bright
-    x += d.text(MONO, name, 12, x, ROW_BASE, "f") + MONO.width(" ", 12)
-    d.text(MONO, f"#{pr['num']}", 12, x, ROW_BASE, "m")
-    date = pr["date"].strftime("%b %Y").upper()
-    dw = d.text(MONO, date, 11, W, ROW_BASE, "m", anchor="end", ls=1.1)
-    title = SANS.fit(pr["title"], 14.5, W - dw - 28 - title_x)
-    d.text(SANS, title, 14.5, title_x, ROW_BASE, "f")
-    d.add(f'<path class="s" d="M0 {ROW_H - 0.5}H{W}" stroke-dasharray="2 4"/>')
-    d.add("</g>")
-    return d.render(theme, W, ROW_H, alt_text(pr))
+    owner, slash, name = repo.partition("/")
+    x += d.text(MONO, owner + slash, 12, x, base, "m")
+    x += d.text(MONO, name, 12, x, base, "f") + MONO.width(" ", 12)
+    d.text(MONO, f"#{pr['num']}", 12, x, base, "m")
 
 
-def alt_text(pr):
-    verb = "Merged" if pr["status"] == "merged" else "Open"
-    return f'{verb} pull request {pr["repo"]}#{pr["num"]}: {pr["title"]} ({pr["date"]:%B %Y})'
+def rows(d, y, prs):
+    """Wide: one line per PR. Narrow: repo and date on top, title underneath."""
+    wide = d.w >= 600
+    if wide:
+        repo_w = max(MONO.width(f"{p['repo']} #{p['num']}", 12) for p in prs)
+        title_x = round(min(max(17 + repo_w + 28, 220), 300))
+    for pr in prs:
+        d.enter(0.06)
+        date = pr["date"].strftime("%b %Y").upper()
+        base = y + ROW_BASE
+        d.add(marker(0, base, pr["status"] == "merged"))
+        dw = d.text(MONO, date, 11, d.w, base, "m", anchor="end", ls=1.1)
+        if wide:
+            repo_label(d, pr, 17, base, title_x - 17 - 24 - MONO.width(f" #{pr['num']}", 12))
+            d.text(SANS, SANS.fit(pr["title"], 14.5, d.w - dw - 28 - title_x), 14.5, title_x, base, "f")
+            h = ROW_H
+        else:
+            repo_label(d, pr, 17, base, d.w - dw - 16 - 17 - MONO.width(f" #{pr['num']}", 12))
+            lines = SANS.wrap(pr["title"], 14.5, d.w - 17)
+            if len(lines) > 2:  # at most two lines, the second one ellipsised
+                lines = [lines[0], SANS.fit(" ".join(lines[1:]), 14.5, d.w - 17)]
+            for k, line in enumerate(lines):
+                d.text(SANS, line, 14.5, 17, base + 22 + 20 * k, "f")
+            h = ROW_H + 22 + 20 * (len(lines) - 1)
+        d.add(f'<path class="s" d="M0 {_n(y + h - 0.5)}H{d.w}" stroke-dasharray="2 4"/>')
+        d.leave()
+        y += h
+    return y
+
+
+def readme_svg(theme, layout, prs):
+    d = Doc(LAYOUTS[layout])
+    wide = layout == "wide"
+    y = separator(d, 0, "00", "About me") + 2
+    y = intro(d, y, 16 if wide else 15, 24 if wide else 22) + 14
+    y = separator(d, y, "01", "Stack")
+    y = stack(d, theme, y) + 16
+    fits = separator_width("Recent contributions", legend=True) <= d.w
+    y = separator(d, y, "02", "Recent contributions", legend=fits)
+    if not fits:  # narrow: the legend gets its own line
+        d.enter()
+        end = d.w
+        for word, merged in (("OPEN", False), ("MERGED", True)):
+            end -= d.text(MONO, word, 10, end, y + 8, "m", anchor="end", ls=1.2) + 7 + MARK
+            d.add(marker(end, y + 8, merged))
+            end -= 20
+        d.leave()
+        y += 12
+    y = rows(d, y, prs) + 2
+    return d.render(theme, y, alt_text(prs))
+
+
+def alt_text(prs):
+    stack_text = " ".join(f"{h}: {', '.join(ICONS[k][0] for k in keys)}." for h, keys in STACK)
+    pr_text = " ".join(f'{"Merged" if p["status"] == "merged" else "Open"} pull request to {p["repo"]} '
+                       f'(#{p["num"]}): {p["title"]}, {p["date"]:%B %Y}.' for p in prs)
+    return f"About me. {INTRO} Stack. {stack_text} Recent contributions. {pr_text}"
 
 
 # ------------------------------------------------------------------ contributions
@@ -317,76 +396,59 @@ def fetch(retries=3):
 
 
 def pick(data):
-    rows = []
+    rows_ = []
     for it in data.get("items", []):
         merged = (it.get("pull_request") or {}).get("merged_at")
         if it.get("draft") or (it["state"] == "closed" and not merged):
             continue  # drafts and PRs closed without merging
         when = merged or it["created_at"]
-        rows.append(dict(repo=it["repository_url"].split("/repos/", 1)[1], num=it["number"],
-                         title=it["title"].strip(), url=it["html_url"],
-                         status="merged" if merged else "open",
-                         date=datetime.strptime(when[:10], "%Y-%m-%d"), sort=when))
-    rows.sort(key=lambda r: r["sort"], reverse=True)
-    return rows[:ROWS]
+        rows_.append(dict(repo=it["repository_url"].split("/repos/", 1)[1], num=it["number"],
+                          title=it["title"].strip(),
+                          status="merged" if merged else "open",
+                          date=datetime.strptime(when[:10], "%Y-%m-%d"), sort=when))
+    rows_.sort(key=lambda r: r["sort"], reverse=True)
+    return rows_[:ROWS]
 
 
-def picture(name, alt, href=None):
-    img = (f'<picture><source media="(prefers-color-scheme: dark)" srcset="assets/{name}-dark.svg">'
-           f'<source media="(prefers-color-scheme: light)" srcset="assets/{name}-light.svg">'
-           f'<img src="assets/{name}-light.svg" alt="{html.escape(alt, quote=True)}" width="100%" align="top"></picture>')
-    return f'<a href="{html.escape(href, quote=True)}">{img}</a>' if href else img
-
-
-def write(name, render):
-    for theme in THEMES:
-        (ASSETS / f"{name}-{theme}.svg").write_text(render(theme), encoding="utf-8")
-
-
-def update_readme(section, block):
-    """Replace what sits between <!-- section:start --> and <!-- section:end --> in README.md."""
-    start, end = f"<!-- {section}:start -->", f"<!-- {section}:end -->"
+def update_readme(alt):
+    """Replace what sits between the readme:start and readme:end markers in README.md."""
+    start, end = "<!-- readme:start -->", "<!-- readme:end -->"
+    src = lambda layout, theme: f"assets/readme-{layout}-{theme}.svg"  # noqa: E731
+    block = "\n".join([
+        "<picture>",
+        f'  <source media="{NARROW_MEDIA} and (prefers-color-scheme: dark)" srcset="{src("narrow", "dark")}">',
+        f'  <source media="{NARROW_MEDIA}" srcset="{src("narrow", "light")}">',
+        f'  <source media="(prefers-color-scheme: dark)" srcset="{src("wide", "dark")}">',
+        f'  <img src="{src("wide", "light")}" alt="{html.escape(alt, quote=True)}" width="100%">',
+        "</picture>",
+    ])
     text = README.read_text(encoding="utf-8")
     pattern = re.compile(re.escape(start) + r".*?" + re.escape(end), re.S)
     if not pattern.search(text):
         sys.exit(f"README.md is missing the {start} … {end} markers")
-    README.write_text(pattern.sub(lambda _: f"{start}\n<p>\n{block}\n</p>\n{end}", text), encoding="utf-8")
+    README.write_text(pattern.sub(lambda _: f"{start}\n{block}\n{end}", text), encoding="utf-8")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--from", dest="src", help="read a saved search API response instead of calling GitHub")
     args = ap.parse_args()
-    ASSETS.mkdir(exist_ok=True)
-
-    # static parts: cheap to redraw, and keeps them in sync with edits to this file
-    write("section-stack", lambda th: separator(th, "01", "Stack"))
-    write("stack", lambda th: stack(th)[0])
-    write("section-contributions", lambda th: separator(th, "02", "Recent contributions", legend=True))
-    update_readme("stack", "<br>\n".join([picture("section-stack", "01 / Stack"),
-                                          picture("stack", stack("light")[1])]))
-
     data = json.loads(Path(args.src).read_text(encoding="utf-8")) if args.src else fetch()
     prs = pick(data)
     if not prs:
-        print("No pull requests found; leaving the current list untouched.", file=sys.stderr)
+        print("No pull requests found; leaving the README untouched.", file=sys.stderr)
         return
-    # one image per PR so each row links to its pull request
-    repo_w = max(MONO.width(f"{p['repo']} #{p['num']}", 12) for p in prs)
-    title_x = round(min(max(17 + repo_w + 28, 220), 300))
-    lines = [picture("section-contributions", "02 / Recent contributions", SEARCH_URL)]
-    for i, pr in enumerate(prs):
-        write(f"pr-{i + 1}", lambda th, pr=pr, i=i: row(th, pr, i, title_x))
-        lines.append(picture(f"pr-{i + 1}", alt_text(pr), pr["url"]))
-        print(f'{pr["date"]:%Y-%m-%d} {pr["status"]:6} {pr["repo"]}#{pr["num"]} {pr["title"]}')
-    for stale in range(len(prs) + 1, ROWS + 1):
+    ASSETS.mkdir(exist_ok=True)
+    for layout in LAYOUTS:
         for theme in THEMES:
-            (ASSETS / f"pr-{stale}-{theme}.svg").unlink(missing_ok=True)
-    update_readme("contributions", "<br>\n".join(lines))
+            (ASSETS / f"readme-{layout}-{theme}.svg").write_text(readme_svg(theme, layout, prs), encoding="utf-8")
+    update_readme(alt_text(prs))
+    for pr in prs:
+        print(f'{pr["date"]:%Y-%m-%d} {pr["status"]:6} {pr["repo"]}#{pr["num"]} {pr["title"]}')
 
 
 GLYPHS = json.loads(Path(__file__).with_name("glyphs.json").read_text(encoding="utf-8"))
-SANS, SANS_BOLD = Face("sans", "s"), Face("sans-bold", "b")
+SANS_REGULAR, SANS, SANS_BOLD = Face("sans-regular", "r"), Face("sans", "s"), Face("sans-bold", "b")
 MONO, MONO_BOLD = Face("mono", "m"), Face("mono-bold", "n")
 
 # key: (label, viewBox size, optical scale, path). Simple Icons (CC0) and Devicon (MIT).

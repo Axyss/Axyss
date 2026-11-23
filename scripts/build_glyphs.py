@@ -18,6 +18,7 @@ LATIN1 = ''.join(chr(c) for c in range(0xa1, 0x100) if unicodedata.category(chr(
 PUNCT = '‘’“”‚„–—…•·→←↗×'
 FACES = {
     # name: (font index, weight, charset, kerning)
+    'sans-regular': (0, 400, ASCII + LATIN1 + PUNCT, True),
     'sans':      (0, 500, ASCII + LATIN1 + PUNCT, True),
     'sans-bold': (0, 700, ASCII, True),
     'mono':      (1, 400, ASCII + LATIN1 + PUNCT, False),

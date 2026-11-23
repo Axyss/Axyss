@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Render the whole profile README as one image and refresh its recent contributions.
+"""Render the profile README as images and refresh its recent contributions.
 
     python scripts/readme.py                    # fetch my PRs, redraw, update README.md
     python scripts/readme.py --from prs.json    # same, from a saved search API response
 
-The README is a single <picture>: a wide layout for desktop and a narrow one for
-phones, each in light and dark, so GitHub picks whichever fits the screen and theme.
-All text is drawn as vector outlines from scripts/glyphs.json, so it looks the same in
-every browser, and the image's alt text carries the full content for screen readers.
+The README is a column of images drawn at the same scale: the intro and stack, the
+contributions heading (linked to all my PRs) and one image per PR (linked to the PR).
+Each comes in a wide layout for desktop and a narrow one for phones, in light and dark,
+so GitHub picks whichever fits the screen and theme. All text is drawn as vector
+outlines from scripts/glyphs.json, so it looks the same in every browser, and each
+image's alt text carries its content for screen readers.
 Standard library only.
 """
 import argparse
@@ -25,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 
 USER = "Axyss"
+ALL_PRS = (f"https://github.com/search?q=author%3A{USER}+is%3Apr+-user%3A{USER}"
+           "&type=pullrequests&s=created&o=desc")
 ROWS = 5
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
@@ -130,8 +134,8 @@ def _base(ch):
 class Doc:
     """An SVG under construction: collects the glyph outlines used and the body markup."""
 
-    def __init__(self, width):
-        self.w, self.defs, self.body, self.delay = width, {}, [], 0.0
+    def __init__(self, width, delay=0.0):
+        self.w, self.defs, self.body, self.delay = width, {}, [], delay
 
     def _glyph(self, face, name, x, y=0):
         adv, shape = face.glyphs[name]
@@ -315,45 +319,51 @@ def repo_label(d, pr, x, base, room):
     d.text(MONO, f"#{pr['num']}", 12, x, base, "m")
 
 
-def rows(d, y, prs):
-    """Wide: one line per PR. Narrow: repo and date on top, title underneath."""
-    wide = d.w >= 600
-    if wide:
-        repo_w = max(MONO.width(f"{p['repo']} #{p['num']}", 12) for p in prs)
-        title_x = round(min(max(17 + repo_w + 28, 220), 300))
-    for pr in prs:
-        d.enter(0.06)
-        date = pr["date"].strftime("%b %Y").upper()
-        base = y + ROW_BASE
-        d.add(marker(0, base, pr["status"] == "merged"))
-        dw = d.text(MONO, date, 11, d.w, base, "m", anchor="end", ls=1.1)
-        if wide:
-            repo_label(d, pr, 17, base, title_x - 17 - 24 - MONO.width(f" #{pr['num']}", 12))
-            d.text(SANS, SANS.fit(pr["title"], 14.5, d.w - dw - 28 - title_x), 14.5, title_x, base, "f")
-            h = ROW_H
-        else:
-            repo_label(d, pr, 17, base, d.w - dw - 16 - 17 - MONO.width(f" #{pr['num']}", 12))
-            lines = SANS.wrap(pr["title"], 14.5, d.w - 17)
-            if len(lines) > 2:  # at most two lines, the second one ellipsised
-                lines = [lines[0], SANS.fit(" ".join(lines[1:]), 14.5, d.w - 17)]
-            for k, line in enumerate(lines):
-                d.text(SANS, line, 14.5, 17, base + 22 + 20 * k, "f")
-            h = ROW_H + 22 + 20 * (len(lines) - 1)
-        d.add(f'<path class="s" d="M0 {_n(y + h - 0.5)}H{d.w}" stroke-dasharray="2 4"/>')
-        d.leave()
-        y += h
-    return y
+def title_column(prs):
+    """Wide layout: where the titles start, so they line up from one row image to the next."""
+    repo_w = max(MONO.width(f"{p['repo']} #{p['num']}", 12) for p in prs)
+    return round(min(max(17 + repo_w + 28, 220), 300))
 
 
-def readme_svg(theme, layout, prs):
+def row(d, pr, title_x):
+    """One PR. Wide: a single line. Narrow: repo and date on top, title underneath."""
+    d.enter(0.06)
+    date = pr["date"].strftime("%b %Y").upper()
+    base = ROW_BASE
+    d.add(marker(0, base, pr["status"] == "merged"))
+    dw = d.text(MONO, date, 11, d.w, base, "m", anchor="end", ls=1.1)
+    if d.w >= 600:
+        repo_label(d, pr, 17, base, title_x - 17 - 24 - MONO.width(f" #{pr['num']}", 12))
+        d.text(SANS, SANS.fit(pr["title"], 14.5, d.w - dw - 28 - title_x), 14.5, title_x, base, "f")
+        h = ROW_H
+    else:
+        repo_label(d, pr, 17, base, d.w - dw - 16 - 17 - MONO.width(f" #{pr['num']}", 12))
+        lines = SANS.wrap(pr["title"], 14.5, d.w - 17)
+        if len(lines) > 2:  # at most two lines, the second one ellipsised
+            lines = [lines[0], SANS.fit(" ".join(lines[1:]), 14.5, d.w - 17)]
+        for k, line in enumerate(lines):
+            d.text(SANS, line, 14.5, 17, base + 22 + 20 * k, "f")
+        h = ROW_H + 22 + 20 * (len(lines) - 1)
+    d.add(f'<path class="s" d="M0 {_n(h - 0.5)}H{d.w}" stroke-dasharray="2 4"/>')
+    d.leave()
+    return h
+
+
+def images(theme, layout, prs):
+    """The README's images, top to bottom, as (name, alt, link, svg). The fade-in delays
+    carry on from one image to the next, so the page still builds up in one sweep."""
     d = Doc(LAYOUTS[layout])
     wide = layout == "wide"
     y = separator(d, 0, "00", "About me") + 2
     y = intro(d, y, 16 if wide else 15, 24 if wide else 22) + 14
     y = separator(d, y, "01", "Stack")
     y = stack(d, theme, y) + 16
+    alt = intro_alt()
+    out = [("intro", alt, None, d.render(theme, y, alt))]
+
+    d = Doc(d.w, d.delay)
     fits = separator_width("Recent contributions", legend=True) <= d.w
-    y = separator(d, y, "02", "Recent contributions", legend=fits)
+    y = separator(d, 0, "02", "Recent contributions", legend=fits)
     if not fits:  # narrow: the legend gets its own line
         d.enter()
         end = d.w
@@ -363,15 +373,25 @@ def readme_svg(theme, layout, prs):
             end -= 20
         d.leave()
         y += 12
-    y = rows(d, y, prs) + 2
-    return d.render(theme, y, alt_text(prs))
+    alt = "Recent contributions: all my pull requests"
+    out.append(("contributions", alt, ALL_PRS, d.render(theme, y, alt)))
+
+    title_x = title_column(prs)
+    for i, pr in enumerate(prs, 1):
+        d = Doc(d.w, d.delay)
+        alt = pr_alt(pr)
+        out.append((f"pr-{i}", alt, pr["url"], d.render(theme, row(d, pr, title_x), alt)))
+    return out
 
 
-def alt_text(prs):
+def intro_alt():
     stack_text = " ".join(f"{h}: {', '.join(ICONS[k][0] for k in keys)}." for h, keys in STACK)
-    pr_text = " ".join(f'{"Merged" if p["status"] == "merged" else "Open"} pull request to {p["repo"]} '
-                       f'(#{p["num"]}): {p["title"]}, {p["date"]:%B %Y}.' for p in prs)
-    return f"About me. {INTRO} Stack. {stack_text} Recent contributions. {pr_text}"
+    return f"About me. {INTRO} Stack. {stack_text}"
+
+
+def pr_alt(p):
+    status = "Merged" if p["status"] == "merged" else "Open"
+    return f'{status} pull request to {p["repo"]} (#{p["num"]}): {p["title"]}, {p["date"]:%B %Y}.'
 
 
 # ------------------------------------------------------------------ contributions
@@ -403,25 +423,31 @@ def pick(data):
             continue  # drafts and PRs closed without merging
         when = merged or it["created_at"]
         rows_.append(dict(repo=it["repository_url"].split("/repos/", 1)[1], num=it["number"],
-                          title=it["title"].strip(),
+                          title=it["title"].strip(), url=it["html_url"],
                           status="merged" if merged else "open",
                           date=datetime.strptime(when[:10], "%Y-%m-%d"), sort=when))
     rows_.sort(key=lambda r: r["sort"], reverse=True)
     return rows_[:ROWS]
 
 
-def update_readme(alt):
+def picture(name, alt):
+    src = lambda layout, theme: f"assets/{name}-{layout}-{theme}.svg"  # noqa: E731
+    # align="top" drops the gap browsers leave under inline images, so the rows sit flush
+    return ("<picture>"
+            f'<source media="{NARROW_MEDIA} and (prefers-color-scheme: dark)" srcset="{src("narrow", "dark")}">'
+            f'<source media="{NARROW_MEDIA}" srcset="{src("narrow", "light")}">'
+            f'<source media="(prefers-color-scheme: dark)" srcset="{src("wide", "dark")}">'
+            f'<img src="{src("wide", "light")}" alt="{html.escape(alt, quote=True)}" width="100%" align="top">'
+            "</picture>")
+
+
+def update_readme(parts):
     """Replace what sits between the readme:start and readme:end markers in README.md."""
     start, end = "<!-- readme:start -->", "<!-- readme:end -->"
-    src = lambda layout, theme: f"assets/readme-{layout}-{theme}.svg"  # noqa: E731
-    block = "\n".join([
-        "<picture>",
-        f'  <source media="{NARROW_MEDIA} and (prefers-color-scheme: dark)" srcset="{src("narrow", "dark")}">',
-        f'  <source media="{NARROW_MEDIA}" srcset="{src("narrow", "light")}">',
-        f'  <source media="(prefers-color-scheme: dark)" srcset="{src("wide", "dark")}">',
-        f'  <img src="{src("wide", "light")}" alt="{html.escape(alt, quote=True)}" width="100%">',
-        "</picture>",
-    ])
+    lines = [picture(name, alt) if href is None else
+             f'<a href="{html.escape(href, quote=True)}">{picture(name, alt)}</a>'
+             for name, alt, href, _ in parts]
+    block = "<p>\n" + "<br>\n".join(lines) + "\n</p>"
     text = README.read_text(encoding="utf-8")
     pattern = re.compile(re.escape(start) + r".*?" + re.escape(end), re.S)
     if not pattern.search(text):
@@ -439,10 +465,18 @@ def main():
         print("No pull requests found; leaving the README untouched.", file=sys.stderr)
         return
     ASSETS.mkdir(exist_ok=True)
+    written = set()
     for layout in LAYOUTS:
         for theme in THEMES:
-            (ASSETS / f"readme-{layout}-{theme}.svg").write_text(readme_svg(theme, layout, prs), encoding="utf-8")
-    update_readme(alt_text(prs))
+            parts = images(theme, layout, prs)
+            for name, _, _, svg in parts:
+                path = ASSETS / f"{name}-{layout}-{theme}.svg"
+                path.write_text(svg, encoding="utf-8")
+                written.add(path.name)
+    for old in ASSETS.glob("pr-*.svg"):  # rows left over from a longer list
+        if old.name not in written:
+            old.unlink()
+    update_readme(parts)
     for pr in prs:
         print(f'{pr["date"]:%Y-%m-%d} {pr["status"]:6} {pr["repo"]}#{pr["num"]} {pr["title"]}')
 

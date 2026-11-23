@@ -246,63 +246,69 @@ def marker(x, base, merged):
     return f'<rect class="o" x="{x + 0.5}" y="{top + 0.5}" width="{MARK - 1}" height="{MARK - 1}"/>'
 
 
-TILE, MIN_PITCH, LABEL_GAP = 42, 72, 16
-HEAD_BASE, RULE_Y, TILE_Y = 14, 22.5, 33.5  # .5: 1px strokes land on whole pixels
-LABEL_BASE = TILE_Y + TILE + 17
-GROUP_H = LABEL_BASE + 8
+CHIP_H, CHIP_GAP, ICON = 24, 6, 14
+HEAD_SIZE, HEAD_LS = 10.5, 1.5
 
 
-def tile(d, theme, key, x, y):
+def chip_parts(key):
+    """(icon path or letters, text): a lettered mark stands in for the start of its name,
+    so "T3 Code" reads as a bold T3 followed by Code."""
+    label, box, _, path = ICONS[key]
+    if not path and label.startswith(f"{box} "):
+        return box, label[len(box) + 1:]
+    return box, label
+
+
+def chip_width(key):
+    mark, text = chip_parts(key)
+    lead = ICON if ICONS[key][3] else SANS_BOLD.width(mark, 9.5 / SANS_BOLD.cap, -0.3)
+    return round(7 + lead + 6 + MONO.width(text, 12) + 10)
+
+
+def chip(d, theme, key, x, y):
+    """A tag: icon and name in a box with two corners cut along the logo's diagonal."""
     t = THEMES[theme]
-    label, box, scale, path = ICONS[key]
-    c, cx = 9, 9 * SLANT  # corners cut along the logo's diagonal
-    pts = [(x + cx, y), (x + TILE, y), (x + TILE, y + TILE - c), (x + TILE - cx, y + TILE), (x, y + TILE), (x, y + c)]
+    _, box, scale, path = ICONS[key]
+    mark, text = chip_parts(key)
+    w, c = chip_width(key), 6
+    cx = c * SLANT
+    pts = [(x + cx, y), (x + w, y), (x + w, y + CHIP_H - c), (x + w - cx, y + CHIP_H), (x, y + CHIP_H), (x, y + c)]
     d.add(f'<polygon points="{" ".join(f"{_n(a)},{_n(b)}" for a, b in pts)}" fill="{t["fg"]}" fill-opacity=".045" '
           f'stroke="{t["fg"]}" stroke-opacity=".26"/>')
+    mid = y + CHIP_H / 2
     if path:
-        size = 22 * scale
-        d.add(f'<path class="f" transform="translate({_n(x + (TILE - size) / 2)} {_n(y + (TILE - size) / 2)}) '
+        size = ICON * scale
+        d.add(f'<path class="f" transform="translate({_n(x + 7 + (ICON - size) / 2)} {_n(mid - size / 2)}) '
               f'scale({_n(size / box, 5)})" d="{path}"/>')
+        tx = x + 7 + ICON + 6
     else:  # no official mark: letter it, e.g. "T3"
-        cap = 12.5 * scale
-        d.text(SANS_BOLD, box, cap / SANS_BOLD.cap, x + TILE / 2, y + (TILE + cap) / 2, "f", anchor="middle", ls=-0.3)
+        tx = x + 7 + d.text(SANS_BOLD, mark, 9.5 / SANS_BOLD.cap, x + 7, mid + 9.5 / 2, "f", ls=-0.3) + 6
+    d.text(MONO, text, 12, tx, round(mid + 12 * MONO.cap / 2, 1), "f")
 
 
-def stack_group(d, theme, y, x0, width, heading, keys, pitch, lw, centred=True):
-    d.text(MONO_BOLD, heading.upper(), 10.5, x0, y + HEAD_BASE, "f", ls=1.8)
-    d.add(f'<path class="s" d="M{x0} {_n(y + RULE_Y)}H{round(x0 + width) + 1}"/>')
-    for j, key in enumerate(keys):
-        x = round(x0 + j * pitch) + 0.5
-        d.enter(0.035)
-        tile(d, theme, key, x, y + TILE_Y)
-        if centred:
-            cx = min(max(x + TILE / 2, lw[key] / 2), d.w - lw[key] / 2)  # keep edge labels inside
-            d.text(MONO, ICONS[key][0], 11, cx, y + LABEL_BASE, "m", anchor="middle")
-        else:
-            d.text(MONO, ICONS[key][0], 11, x - 0.5, y + LABEL_BASE, "m")
-        d.leave()
-
-
-def stack(d, theme, y):
-    """Wide: three columns on one pitch across the full width. Narrow: one group per row."""
-    lw = {k: MONO.width(ICONS[k][0], 11) for _, keys in STACK for k in keys}
-    pitch = max([MIN_PITCH] + [(lw[a] + lw[b]) / 2 + LABEL_GAP
-                               for _, keys in STACK for a, b in zip(keys, keys[1:])])
-    widths = [max(MONO_BOLD.width(h.upper(), 10.5, 1.8),  # heading, tiles, or a long last label
-                  (len(keys) - 1) * pitch + max(TILE, (TILE + lw[keys[-1]]) / 2)) for h, keys in STACK]
-    if sum(widths) + 48 * (len(STACK) - 1) <= d.w:
-        gap = (d.w - 1 - sum(widths)) / max(len(STACK) - 1, 1)
-        gx = 0.0
-        for (heading, keys), gw in zip(STACK, widths):
-            stack_group(d, theme, y, round(gx), gw, heading, keys, pitch, lw)
-            gx += gw + gap
-        return y + GROUP_H
-    # narrow: one group per row, labels left-aligned under their tiles so long ones never collide
-    pitch = max([MIN_PITCH] + [lw[k] + LABEL_GAP for _, keys in STACK for k in keys[:-1]])
+def stack(d, theme, y, col_x):
+    """Wide: a table, the level on the left and its chips from col_x (the PR titles' column).
+    Narrow: each level above its chips, which wrap if they run out of room."""
+    head_w = max(MONO.width(h.upper(), HEAD_SIZE, HEAD_LS) for h, _ in STACK)
+    table = d.w >= 600
+    x0 = max(col_x, round(head_w) + 24) if table else 0
     for heading, keys in STACK:
-        stack_group(d, theme, y, 0, d.w - 1, heading, keys, pitch, lw, centred=False)
-        y += GROUP_H + 12
-    return y - 12
+        d.enter(0.05)
+        top = y if table else y + 18
+        base = round(top + CHIP_H / 2 + HEAD_SIZE * MONO.cap / 2, 1) if table else y + 9
+        d.text(MONO, heading.upper(), HEAD_SIZE, 0, base, "m", ls=HEAD_LS)
+        d.leave()
+        x = x0
+        for key in keys:
+            w = chip_width(key)
+            if x > x0 and x + w > d.w - 1:
+                x, top = x0, top + CHIP_H + CHIP_GAP
+            d.enter(0.03)
+            chip(d, theme, key, x + 0.5, top + 0.5)
+            d.leave()
+            x += w + CHIP_GAP
+        y = top + CHIP_H + (8 if table else 14)
+    return y - (8 if table else 14) + 1
 
 
 ROW_H, ROW_BASE = 34, 21
@@ -354,10 +360,11 @@ def images(theme, layout, prs):
     carry on from one image to the next, so the page still builds up in one sweep."""
     d = Doc(LAYOUTS[layout])
     wide = layout == "wide"
+    title_x = title_column(prs)
     y = separator(d, 0, "00", "About me") + 2
     y = intro(d, y, 16 if wide else 15, 24 if wide else 22) + 14
-    y = separator(d, y, "01", "Stack")
-    y = stack(d, theme, y) + 16
+    y = separator(d, y, "01", "Stack") - 2
+    y = stack(d, theme, y, title_x) + 18
     alt = intro_alt()
     out = [("intro", alt, None, d.render(theme, y, alt))]
 
@@ -376,7 +383,6 @@ def images(theme, layout, prs):
     alt = "Recent contributions: all my pull requests"
     out.append(("contributions", alt, ALL_PRS, d.render(theme, y, alt)))
 
-    title_x = title_column(prs)
     for i, pr in enumerate(prs, 1):
         d = Doc(d.w, d.delay)
         alt = pr_alt(pr)

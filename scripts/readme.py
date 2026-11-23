@@ -58,7 +58,7 @@ THEMES = {
 # Two layouts: GitHub's profile column is ~840px on desktop, so 1 unit ≈ 1px there;
 # phones get a narrower, taller layout so the text stays readable.
 LAYOUTS = {"wide": 840, "narrow": 380}
-NARROW_MEDIA = "(max-width: 600px)"
+NARROW_MAX = 600  # px; phones get the narrow layout
 SLANT = 0.615  # dx/dy of the diagonal strokes in the logo (≈58°)
 
 # The logo's five strokes, in its own units; LOGO_BOX is x, y, width, height of the whole mark.
@@ -520,14 +520,21 @@ def pick(data):
 
 
 def picture(name, alt):
-    src = lambda layout, theme: f"assets/{name}-{layout}-{theme}.svg"  # noqa: E731
-    # align="top" drops the gap browsers leave under inline images, so the rows sit flush
-    return ("<picture>"
-            f'<source media="{NARROW_MEDIA} and (prefers-color-scheme: dark)" srcset="{src("narrow", "dark")}">'
-            f'<source media="{NARROW_MEDIA}" srcset="{src("narrow", "light")}">'
-            f'<source media="(prefers-color-scheme: dark)" srcset="{src("wide", "dark")}">'
-            f'<img src="{src("wide", "light")}" alt="{html.escape(alt, quote=True)}" width="100%" align="top">'
-            "</picture>")
+    """Two pictures: the wide layout and the phone one. Each chooses light or dark on its own, and the
+    one that doesn't fit the screen shows a blank 0x0 image. Width and theme never share a media
+    query, because GitHub rewrites any query that mentions prefers-color-scheme to follow the theme
+    chosen in its settings, which would make "(max-width: 600px) and (prefers-color-scheme: dark)"
+    match on desktop too."""
+    out = []
+    for layout, hide in (("wide", f"(max-width: {NARROW_MAX}px)"), ("narrow", f"(min-width: {NARROW_MAX + 1}px)")):
+        src = lambda theme: f"assets/{name}-{layout}-{theme}.svg"  # noqa: E731
+        # align="top" drops the gap browsers leave under inline images, so the rows sit flush
+        out.append("<picture>"
+                   f'<source media="{hide}" srcset="assets/blank.svg" width="0" height="0">'
+                   f'<source media="(prefers-color-scheme: dark)" srcset="{src("dark")}">'
+                   f'<img src="{src("light")}" alt="{html.escape(alt, quote=True)}" width="100%" align="top">'
+                   "</picture>")
+    return "".join(out)
 
 
 def update_readme(parts):
@@ -554,6 +561,7 @@ def main():
         print("No pull requests found; leaving the README untouched.", file=sys.stderr)
         return
     ASSETS.mkdir(exist_ok=True)
+    (ASSETS / "blank.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="0"/>\n', encoding="utf-8")
     written = set()
     for layout in LAYOUTS:
         for theme in THEMES:

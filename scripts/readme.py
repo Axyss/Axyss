@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the profile README as images and refresh its recent contributions.
+"""Render the profile README as images and refresh its recent contributions (PRs and issues).
 
     python scripts/readme.py                    # fetch my PRs, redraw, update README.md
     python scripts/readme.py --from prs.json    # same, from a saved search API response
@@ -218,8 +218,8 @@ def intro(d, y, size, leading, wrap=None):
 SEP_H, SEP_BASE, SEP_SIZE = 38, 24, 13
 
 
-def separator(d, y, num, title, legend=False, right=0):
-    """"01 / STACK ────" section divider, optionally with the merged/open legend."""
+def separator(d, y, num, title, right=0):
+    """"01 / STACK ────" section divider."""
     base = y + SEP_BASE
     d.enter(0.06)
     d.text(MONO, num, 11, 0, base, "m", ls=1)
@@ -229,33 +229,28 @@ def separator(d, y, num, title, legend=False, right=0):
     x = 22 + dx + 4.2 + 9
     x += d.text(SANS_BOLD, title.upper(), SEP_SIZE, x, base, "f", ls=3.2)
     end = d.w - right
-    if legend:  # drawn right to left: "■ MERGED  □ OPEN"
-        for word, merged in (("OPEN", False), ("MERGED", True)):
-            end -= d.text(MONO, word, 10, end, base, "m", anchor="end", ls=1.2) + 7 + MARK
-            d.add(marker(end, base, merged))
-            end -= 20
     d.leave()
     mid = round(base - SEP_SIZE * SANS_BOLD.cap / 2) + 0.5
     d.add(f'<path class="s rule" style="animation-delay:{d.delay:.2f}s" d="M{_n(x + 14)} {_n(mid)}H{_n(end)}"/>')
     return y + SEP_H
 
 
-def separator_width(title, legend=False):
-    w = 22 + 13 * SLANT + 4.2 + 9 + SANS_BOLD.width(title.upper(), SEP_SIZE, 3.2) + 14 + 40
-    if legend:
-        w += sum(MONO.width(word, 10, 1.2) + 7 + MARK + 20 for word in ("OPEN", "MERGED"))
-    return w
 
 
-MARK = 8
+# GitHub's own Octicons (MIT, @primer/octicons 19.42.0), 16x16, for a row's kind and state.
+STATE_ICONS = {
+    ("pr", "merged"): "M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z",
+    ("pr", "open"): "M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z",
+    ("issue", "closed"): "M11.28 6.78a.75.75 0 0 0-1.06-1.06L7.25 8.69 5.78 7.22a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l3.5-3.5Z M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0Zm-1.5 0a6.5 6.5 0 1 0-13 0 6.5 6.5 0 0 0 13 0Z",
+    ("issue", "open"): "M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z",
+}
 
 
-def marker(x, base, merged):
-    """Status mark for a PR, sitting on the baseline: solid square when merged, hollow when open."""
-    x, top = round(x), round(base) - MARK
-    if merged:
-        return f'<rect class="f" x="{x}" y="{top}" width="{MARK}" height="{MARK}"/>'
-    return f'<rect class="o" x="{x + 0.5}" y="{top + 0.5}" width="{MARK - 1}" height="{MARK - 1}"/>'
+def marker(x, base, kind, status, size=12):
+    """The row's icon, centred on the text's x-height: merged or open PR, closed or open issue."""
+    top = base - 4.3 - size / 2
+    return (f'<path class="f" fill-rule="evenodd" transform="translate({_n(x)} {_n(top)}) scale({_n(size / 16, 4)})" '
+            f'd="{STATE_ICONS[(kind, status)]}"/>')
 
 
 def logo(d, x, y, h, outline=False, step=0.07):
@@ -400,7 +395,7 @@ def repo_label(d, pr, x, base, room):
 def title_column(prs):
     """Wide layout: where the titles start, so they line up from one row image to the next."""
     repo_w = max(MONO.width(f"{p['repo']} #{p['num']}", 12) for p in prs)
-    return round(min(max(17 + repo_w + 28, 220), 300))
+    return round(min(max(20 + repo_w + 28, 220), 300))
 
 
 def row(d, pr, title_x):
@@ -408,19 +403,19 @@ def row(d, pr, title_x):
     d.enter(0.06)
     date = pr["date"].strftime("%b %Y").upper()
     base = ROW_BASE
-    d.add(marker(0, base, pr["status"] == "merged"))
+    d.add(marker(0, base, pr["kind"], pr["status"]))
     dw = d.text(MONO, date, 11, d.w, base, "m", anchor="end", ls=1.1)
     if d.w >= 600:
-        repo_label(d, pr, 17, base, title_x - 17 - 24 - MONO.width(f" #{pr['num']}", 12))
+        repo_label(d, pr, 20, base, title_x - 20 - 24 - MONO.width(f" #{pr['num']}", 12))
         d.text(SANS, SANS.fit(pr["title"], 14.5, d.w - dw - 28 - title_x), 14.5, title_x, base, "f")
         h = ROW_H
     else:
-        repo_label(d, pr, 17, base, d.w - dw - 16 - 17 - MONO.width(f" #{pr['num']}", 12))
-        lines = SANS.wrap(pr["title"], 14.5, d.w - 17)
+        repo_label(d, pr, 20, base, d.w - dw - 16 - 20 - MONO.width(f" #{pr['num']}", 12))
+        lines = SANS.wrap(pr["title"], 14.5, d.w - 20)
         if len(lines) > 2:  # at most two lines, the second one ellipsised
-            lines = [lines[0], SANS.fit(" ".join(lines[1:]), 14.5, d.w - 17)]
+            lines = [lines[0], SANS.fit(" ".join(lines[1:]), 14.5, d.w - 20)]
         for k, line in enumerate(lines):
-            d.text(SANS, line, 14.5, 17, base + 22 + 20 * k, "f")
+            d.text(SANS, line, 14.5, 20, base + 22 + 20 * k, "f")
         h = ROW_H + 22 + 20 * (len(lines) - 1)
     d.add(f'<path class="s" d="M0 {_n(h - 0.5)}H{d.w}" stroke-dasharray="2 4"/>')
     d.leave()
@@ -452,17 +447,7 @@ def images(theme, layout, prs):
     out = [("intro", alt, None, d.render(theme, y, alt))]
 
     d = Doc(d.w, d.delay)
-    fits = separator_width("Recent contributions", legend=True) <= d.w
-    y = separator(d, 0, "02", "Recent contributions", legend=fits)
-    if not fits:  # narrow: the legend gets its own line
-        d.enter()
-        end = d.w
-        for word, merged in (("OPEN", False), ("MERGED", True)):
-            end -= d.text(MONO, word, 10, end, y + 8, "m", anchor="end", ls=1.2) + 7 + MARK
-            d.add(marker(end, y + 8, merged))
-            end -= 20
-        d.leave()
-        y += 12
+    y = separator(d, 0, "02", "Recent contributions")
     alt = "Recent contributions: all my pull requests"
     out.append(("contributions", alt, ALL_PRS, d.render(theme, y, alt)))
 
@@ -479,14 +464,23 @@ def intro_alt():
 
 
 def pr_alt(p):
-    status = "Merged" if p["status"] == "merged" else "Open"
-    return f'{status} pull request to {p["repo"]} (#{p["num"]}): {p["title"]}, {p["date"]:%B %Y}.'
+    status = p["status"].capitalize()
+    what = "issue in" if p["kind"] == "issue" else "pull request to"
+    return f'{status} {what} {p["repo"]} (#{p["num"]}): {p["title"]}, {p["date"]:%B %Y}.'
 
 
 # ------------------------------------------------------------------ contributions
 
 def fetch(retries=3):
-    q = urllib.parse.urlencode({"q": f"author:{USER} is:pr -user:{USER}", "sort": "updated",
+    """My PRs and issues on other people's repos, as one search-API-shaped response."""
+    items = []
+    for kind in ("pr", "issue"):
+        items += search(f"author:{USER} is:{kind} -user:{USER}", retries)["items"]
+    return {"items": items}
+
+
+def search(query, retries):
+    q = urllib.parse.urlencode({"q": query, "sort": "updated",
                                 "order": "desc", "per_page": 100})
     headers = {"Accept": "application/vnd.github+json", "User-Agent": f"{USER}-profile-readme",
                "X-GitHub-Api-Version": "2022-11-28"}
@@ -507,13 +501,20 @@ def fetch(retries=3):
 def pick(data):
     rows_ = []
     for it in data.get("items", []):
-        merged = (it.get("pull_request") or {}).get("merged_at")
-        if it.get("draft") or (it["state"] == "closed" and not merged):
-            continue  # drafts and PRs closed without merging
-        when = merged or it["created_at"]
+        if "pull_request" in it:
+            done = it["pull_request"].get("merged_at")
+            if it.get("draft") or (it["state"] == "closed" and not done):
+                continue  # drafts and PRs closed without merging
+            kind, status = "pr", "merged" if done else "open"
+        else:
+            done = it.get("closed_at") if it["state"] == "closed" else None
+            if it["state"] == "closed" and it.get("state_reason") != "completed":
+                continue  # issues closed as not planned or duplicate
+            kind, status = "issue", "closed" if done else "open"
+        when = done or it["created_at"]
+        title = re.sub(r"^(?:[^\w\[]+|\[[^\]]*\]\s*)+", "", it["title"].strip()) or it["title"].strip()
         rows_.append(dict(repo=it["repository_url"].split("/repos/", 1)[1], num=it["number"],
-                          title=it["title"].strip(), url=it["html_url"],
-                          status="merged" if merged else "open",
+                          title=title, url=it["html_url"], kind=kind, status=status,
                           date=datetime.strptime(when[:10], "%Y-%m-%d"), sort=when))
     rows_.sort(key=lambda r: r["sort"], reverse=True)
     return rows_[:ROWS]
@@ -575,7 +576,7 @@ def main():
             old.unlink()
     update_readme(parts)
     for pr in prs:
-        print(f'{pr["date"]:%Y-%m-%d} {pr["status"]:6} {pr["repo"]}#{pr["num"]} {pr["title"]}')
+        print(f'{pr["date"]:%Y-%m-%d} {pr["kind"]:5} {pr["status"]:6} {pr["repo"]}#{pr["num"]} {pr["title"]}')
 
 
 GLYPHS = json.loads(Path(__file__).with_name("glyphs.json").read_text(encoding="utf-8"))

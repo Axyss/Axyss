@@ -34,6 +34,10 @@ ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
 README = ROOT / "README.md"
 
+# What sits above "00 / About me": "wordmark", "greeting", "prompt", "mark", "outline" or None.
+HEADER = "outline"
+NAME, SITE = "Alejandro", "axyss.dev"
+
 INTRO = ("I love building open source tools and trying out new tech. These days I'm mostly into "
          "self-hosting and trying the shiny new frontier model of the month.")
 
@@ -56,6 +60,11 @@ THEMES = {
 LAYOUTS = {"wide": 840, "narrow": 380}
 NARROW_MEDIA = "(max-width: 600px)"
 SLANT = 0.615  # dx/dy of the diagonal strokes in the logo (≈58°)
+
+# The logo's five strokes, in its own units; LOGO_BOX is x, y, width, height of the whole mark.
+LOGO = ["190,76 119,192 143,191 198,102 247,308 272,309 216,78", "336,76 308,76 254,155 261,185",
+        "210,219 148,309 175,309 217,249", "118,231 94,232 47,309 71,308", "336,257 294,309 325,309"]
+LOGO_BOX = (47, 76, 289, 233)
 
 
 # ---------------------------------------------------------------------------- text
@@ -175,6 +184,9 @@ class Doc:
                "@keyframes in{from{opacity:0;transform:translateY(5px)}}"
                ".rule{transform-box:fill-box;transform-origin:left;animation:rule .9s cubic-bezier(.6,0,.2,1) backwards}"
                "@keyframes rule{from{transform:scaleX(0)}}"
+               ".k{animation:k 1ms steps(1) backwards}@keyframes k{from{opacity:0}}"
+               "@keyframes mv{from{transform:translateX(var(--from))}}"
+               "@keyframes bl{50%{opacity:0}}"
                "@media (prefers-reduced-motion:reduce){*{animation:none!important}}")
         label = html.escape(label, quote=True)
         return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{self.w}" height="{_n(h)}" viewBox="0 0 {self.w} {_n(h)}" '
@@ -194,8 +206,8 @@ def _attr(name, v):
 # ----------------------------------------------------------------------- sections
 # Each section draws at vertical offset y and returns the y where the next one starts.
 
-def intro(d, y, size, leading):
-    lines = SANS_REGULAR.wrap(INTRO, size, d.w)
+def intro(d, y, size, leading, wrap=None):
+    lines = SANS_REGULAR.wrap(INTRO, size, wrap or d.w)
     d.enter()
     for i, line in enumerate(lines):
         d.text(SANS_REGULAR, line, size, 0, y + round(leading * 0.72) + i * leading, "f")
@@ -206,7 +218,7 @@ def intro(d, y, size, leading):
 SEP_H, SEP_BASE, SEP_SIZE = 38, 24, 13
 
 
-def separator(d, y, num, title, legend=False):
+def separator(d, y, num, title, legend=False, right=0):
     """"01 / STACK ────" section divider, optionally with the merged/open legend."""
     base = y + SEP_BASE
     d.enter(0.06)
@@ -216,7 +228,7 @@ def separator(d, y, num, title, legend=False):
     d.add(f'<polygon class="f" points="{" ".join(f"{_n(a)},{_n(b)}" for a, b in pts)}"/>')
     x = 22 + dx + 4.2 + 9
     x += d.text(SANS_BOLD, title.upper(), SEP_SIZE, x, base, "f", ls=3.2)
-    end = d.w
+    end = d.w - right
     if legend:  # drawn right to left: "■ MERGED  □ OPEN"
         for word, merged in (("OPEN", False), ("MERGED", True)):
             end -= d.text(MONO, word, 10, end, base, "m", anchor="end", ls=1.2) + 7 + MARK
@@ -244,6 +256,66 @@ def marker(x, base, merged):
     if merged:
         return f'<rect class="f" x="{x}" y="{top}" width="{MARK}" height="{MARK}"/>'
     return f'<rect class="o" x="{x + 0.5}" y="{top + 0.5}" width="{MARK - 1}" height="{MARK - 1}"/>'
+
+
+def logo(d, x, y, h, outline=False, step=0.07):
+    """Draw the logo h px tall with its top-left corner at x, y; the strokes fade in one by one."""
+    s = h / LOGO_BOX[3]
+    d.add(f'<g transform="translate({_n(x - LOGO_BOX[0] * s)} {_n(y - LOGO_BOX[1] * s)}) scale({_n(s, 5)})">')
+    for pts in LOGO:
+        d.enter(step)
+        if outline:
+            d.add(f'<polygon class="o" stroke-opacity=".3" vector-effect="non-scaling-stroke" points="{pts}"/>')
+        else:
+            d.add(f'<polygon class="f" points="{pts}"/>')
+        d.leave()
+    d.add("</g>")
+    return LOGO_BOX[2] * s
+
+
+def header(d, style):
+    """The small header above "00 / About me". Returns where the page continues."""
+    wide = d.w >= 600
+    if style == "wordmark":  # logo and AXYSS on the left, the site on the right
+        h = 24
+        x = logo(d, 0, 2, h) + 12
+        base = round(2 + h / 2 + 15 * SANS_BOLD.cap / 2)
+        d.enter()
+        d.text(SANS_BOLD, "AXYSS", 15, x, base, "f", ls=4)
+        d.text(MONO, SITE, 11, d.w, base, "m", anchor="end", ls=0.6)
+        d.leave()
+        return 2 + h + 14
+    if style == "greeting":  # "Hi, I'm Alejandro." with the logo at the far end
+        size = 30 if wide else 24
+        base = round(size * 1.02)
+        d.enter()
+        d.text(SANS, f"Hi, I'm {NAME}.", size, 0, base, "f", ls=-0.4)
+        d.leave()
+        h = round(size * SANS.cap * 1.25)
+        logo(d, d.w - 1 - LOGO_BOX[2] * h / LOGO_BOX[3], base - h, h)
+        return base + 16
+    if style == "prompt":  # $ whoami, typed out, with a blinking cursor
+        size, base = 14, 17
+        adv = MONO.width("m", size)
+        d.enter()
+        d.text(MONO, "~ $", size, 0, base, "m")
+        d.leave()
+        x0, word, t0, dt = MONO.width("~ $ ", size), "whoami", d.delay + 0.35, 0.08
+        for i, ch in enumerate(word):
+            d.add(f'<g class="k" style="animation-delay:{t0 + i * dt:.2f}s">')
+            d.text(MONO, ch, size, x0 + i * adv, base, "f")
+            d.add("</g>")
+        n = len(word)
+        d.add(f'<rect class="f" x="{_n(x0 + n * adv + 2)}" y="{base - 13}" width="{_n(adv)}" height="16" '
+              f'style="--from:{_n(-n * adv)}px;animation:mv {n * dt:.2f}s steps({n},jump-start) {t0:.2f}s backwards,'
+              f'bl 1.1s steps(1) {t0 + n * dt + 0.3:.2f}s infinite"/>')
+        d.delay = t0 + n * dt
+        return base + 14
+    if style == "mark":  # just the logo
+        h = 40 if wide else 34
+        logo(d, 0, 2, h)
+        return 2 + h + 12
+    return 0
 
 
 CHIP_H, CHIP_GAP, ICON = 24, 6, 14
@@ -361,8 +433,19 @@ def images(theme, layout, prs):
     d = Doc(LAYOUTS[layout])
     wide = layout == "wide"
     title_x = title_column(prs)
-    y = separator(d, 0, "00", "About me") + 2
-    y = intro(d, y, 16 if wide else 15, 24 if wide else 22) + 14
+    y = header(d, HEADER) if HEADER else 0
+    if HEADER == "outline":  # the logo's outline beside the About section; on phones, at the heading's end
+        top = y
+        lh = 96 if wide else 30
+        lw = LOGO_BOX[2] * lh / LOGO_BOX[3]
+        y = separator(d, y, "00", "About me", right=lw + (28 if wide else 14)) + 2
+        y = intro(d, y, 16 if wide else 15, 24 if wide else 22, wrap=d.w - lw - 36 if wide else None) + 14
+        d.delay, later = 0.0, d.delay
+        logo(d, d.w - 1 - lw, top + (10 if wide else 4), lh, outline=True)
+        d.delay = later
+    else:
+        y = separator(d, y, "00", "About me") + 2
+        y = intro(d, y, 16 if wide else 15, 24 if wide else 22) + 14
     y = separator(d, y, "01", "Stack") - 2
     y = stack(d, theme, y, title_x) + 18
     alt = intro_alt()
